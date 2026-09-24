@@ -1,0 +1,63 @@
+name: Add orphan issues to triage project
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  add:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          script: |
+            const projectId = "PVT_kwDOBNaEts4BkjVP";
+            const q = "repo:bindeleddet/pegasus repo:bindeleddet/odyssey repo:bindeleddet/bindeleddet-core is:issue is:open no:project";
+
+            const res = await github.graphql(`
+              query($q: String!) {
+                search(query: $q, type: ISSUE, first: 100) {
+                  nodes { ... on Issue { id } }
+                }
+              }`, { q });
+
+            for (const issue of res.search.nodes) {
+              await github.graphql(`
+                mutation($p: ID!, $c: ID!) {
+                  addProjectV2ItemById(input: { projectId: $p, contentId: $c }) {
+                    item { id }
+                  }
+                }`, { p: projectId, c: issue.id });
+            }
+            console.log(`Added ${res.search.nodes.length} issues`);
+            
+            const items = await github.graphql(`
+              query($p: ID!) {
+                node(id: $p) {
+                  ... on ProjectV2 {
+                    items(first: 100) {
+                      nodes {
+                        id
+                        content {
+                          ... on Issue { projectItems(first: 10) { totalCount } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }`, { p: projectId });
+
+            let removed = 0;
+            for (const item of items.node.items.nodes) {
+              if (item.content?.projectItems?.totalCount > 1) {
+                await github.graphql(`
+                  mutation($p: ID!, $i: ID!) {
+                    deleteProjectV2Item(input: { projectId: $p, itemId: $i }) {
+                      deletedItemId
+                    }
+                  }`, { p: projectId, i: item.id });
+                removed++;
+              }
+            }
+            console.log(`Removed ${removed} issues`);
